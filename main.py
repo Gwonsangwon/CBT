@@ -3,214 +3,310 @@ import json
 from kivy.app import App
 from kivy.uix.screenmanager import ScreenManager, Screen
 from kivy.uix.spinner import Spinner
-from kivy.uix.button import Button
-from kivy.core.text import LabelBase
 from kivy.clock import Clock
 from kivy.uix.label import Label
 from kivy.uix.boxlayout import BoxLayout
-from kivy.graphics import Color, Rectangle
+from kivy.graphics import Color, Rectangle ,Line
+from kivy.animation import Animation
+from kivy.uix.scatter import Scatter
+from kivy.uix.label import Label
+from kivy.core.text import LabelBase
+from kivy.uix.popup import Popup
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+
 
 LabelBase.register(name="NotoSans", fn_regular="fonts/NotoSansKR-Regular.otf")
-
+fn_regular="fonts/NotoSansKR-Regular.otf"
 DATA_FOLDER = "data"
 
+
+class GlobalState:
+    def __init__(self):
+        self.data_reset() 
+
+    def data_reset(self):
+        self.current_question = 1
+        self.current_page = 0
+        self.exam_images = []
+        self.user_answers = {i: 0 for i in range(1, 51)}
+        self.selected_exam = None 
+
+    def show_exit_popup(self, screen):
+        content = BoxLayout(orientation='vertical', spacing=10, padding=20)
+
+        with content.canvas.before:
+            Color(1, 1, 1, 1) 
+            rect = Rectangle(pos=content.pos, size=content.size)
+
+        content.bind(pos=lambda instance, value: setattr(rect, 'pos', value))
+        content.bind(size=lambda instance, value: setattr(rect, 'size', value))
+
+        label = Label(
+            text="시험을 종료하고 홈으로 돌아가시겠습니까?",
+            font_size=20,
+            font_name="NotoSans",
+            color=(0, 0, 0, 1),
+            size_hint_y=None,
+            height=50
+        )
+
+        button_layout = BoxLayout(size_hint_y=None, height=50, spacing=10)
+
+        popup = Popup(
+            title="", 
+            content=content,
+            size_hint=(0.7, 0.3),
+            auto_dismiss=False
+        )
+
+        yes_button = Button(
+            text="예",
+            font_size=18,
+            font_name="NotoSans",
+            background_color=(0.2, 0.6, 1, 1),
+            on_press=lambda instance: self.confirm_exit(screen,popup)
+        )
+
+        no_button = Button(
+            text="아니오",
+            font_size=18,
+            font_name="NotoSans",
+            background_color=(1, 0.2, 0.2, 1),
+            on_press=lambda instance: popup.dismiss()  # 팝업 닫기
+        )
+
+        button_layout.add_widget(yes_button)
+        button_layout.add_widget(no_button)
+
+        content.add_widget(label)
+        content.add_widget(button_layout)
+
+        popup.open()
+
+    def confirm_exit(self,screen,popup):
+        popup.dismiss()
+        self.data_reset()
+        screen.manager.current = "main"
+ 
 class MainScreen(Screen):
     def on_enter(self):
         Clock.schedule_once(self.load_exam_list, 0.1)
 
     def load_exam_list(self, *args):
-        """ 시험 회차 리스트를 드롭다운(Spinner)으로 표시 """
         spinner = self.ids.exam_spinner
         spinner.values = []
         if not os.path.exists(DATA_FOLDER):
             return
         exams = sorted([d for d in os.listdir(DATA_FOLDER) if os.path.isdir(os.path.join(DATA_FOLDER, d))])
         spinner.values = exams
-        self.selected_exam = exams[0] if exams else None
+
+        app = App.get_running_app()
+        app.global_state.selected_exam = exams[0] if exams else None  #
 
     def set_selected_exam(self, exam_name):
-        """ 선택한 회차 저장 """
-        self.selected_exam = exam_name
+        App.get_running_app().global_state.selected_exam = exam_name
 
     def start_exam(self):
-        """ 시험 시작 버튼 클릭 시 선택된 회차의 시험 페이지로 이동 """
-        if self.selected_exam:
+        app = App.get_running_app()
+        if app.global_state.selected_exam:
             exam_screen = self.manager.get_screen("exam")
-            exam_screen.load_exam(self.selected_exam)
+            exam_screen.load_exam()
             self.manager.current = "exam"
 
-class ExamScreen(Screen):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.current_question = 1
-        self.current_page = 0  # ✅ 현재 시험지 페이지
-        self.exam_images = []  # ✅ 시험지 이미지 리스트
-        self.user_answers = {i: 0 for i in range(1, 51)}
-
-    def load_exam(self, exam_name):
-        """ 선택한 회차의 시험을 로드 """
-        self.selected_exam = exam_name
+class ExamScreen(Screen):    
+    def load_exam(self):
+        app = App.get_running_app()
+        exam_name = app.global_state.selected_exam
+        if not exam_name:
+            return
+        
         exam_folder = os.path.join(DATA_FOLDER, exam_name)
-        self.exam_images = sorted(
-            [f for f in os.listdir(exam_folder) if f.endswith(".png")]
-        )
-        print(f"🔍 선택한 시험: {exam_name}")
-        self.current_page = 0  #
-        self.show_exam_page() 
+        app.global_state.exam_images = sorted([f for f in os.listdir(exam_folder) if f.endswith(".png")])
+        
+        app.global_state.current_page = 0 
+        self.show_exam_page()
         self.update_question()
         self.update_answer_buttons()
-    
+
     def show_exam_page(self):
-        """ 현재 페이지의 시험지 이미지를 표시 """
-        if not self.exam_images:
-            print("❌ 오류: 시험지 이미지가 없습니다! (show_exam_page)")
+        app = App.get_running_app()
+        if not app.global_state.exam_images:
             return
 
-        image_path = os.path.join(DATA_FOLDER, self.selected_exam, self.exam_images[self.current_page])
-        print(f"✅ 현재 시험지 이미지 경로: {image_path}")
-
-        if not os.path.exists(image_path):
-            print(f"❌ 오류: {image_path} 파일이 존재하지 않습니다!")
-            return
-
-        self.ids.exam_image.source = image_path  # ✅ 이미지 업데이트
-        self.ids.exam_image.reload()  # ✅ Kivy에서 이미지 다시 로드
-        self.ids.current_page.text = f"P.{self.current_page+1}"
+        image_path = os.path.join(DATA_FOLDER, app.global_state.selected_exam, app.global_state.exam_images[app.global_state.current_page])
+        self.ids.exam_image.source = image_path
+        self.ids.exam_image.reload()
+        self.ids.current_page.text = f"{app.global_state.current_page + 1} 페이지"
 
     def prev_page(self):
-        """ 이전 시험지 페이지 """
-        if self.current_page > 0:
-            self.current_page -= 1
+        app = App.get_running_app()
+        if app.global_state.current_page > 0:
+            app.global_state.current_page -= 1
             self.show_exam_page()
 
     def next_page(self):
-        """ 다음 시험지 페이지 """
-        if self.current_page < len(self.exam_images) - 1:
-            self.current_page += 1
+        app = App.get_running_app()
+        if app.global_state.current_page < len(app.global_state.exam_images) - 1:
+            app.global_state.current_page += 1
             self.show_exam_page()
 
     def update_question(self):
-        """ 현재 문항 번호 업데이트 """
-        self.ids.question_number.text = f"{self.current_question}번"
+        app = App.get_running_app()
+        self.ids.question_number.text = f"{app.global_state.current_question}번"
+    
+    def edit_question(self):
+        """ ✅ 문제 번호를 입력할 수 있는 팝업창 생성 """
+        app = App.get_running_app()
+
+        content = BoxLayout(orientation='vertical', spacing=10, padding=20)
+
+        text_input = TextInput(
+            text=str(app.global_state.current_question),
+            font_size=20,
+            font_name="NotoSans",
+            multiline=False,
+            input_filter='int',  # ✅ 숫자만 입력 가능
+            halign="center",
+            size_hint_y=None,
+            height=50
+        )
+
+        button_layout = BoxLayout(size_hint_y=None, height=50, spacing=10)
+
+        popup = Popup(
+            title="",
+            content=content,
+            size_hint=(0.6, 0.3),
+            auto_dismiss=False,
+            background_color=(1, 1, 1, 1),  # ✅ 팝업 배경 흰색
+            separator_color=(1, 1, 1, 1)  # ✅ 상단 바 검은색
+        )
+
+        def go_to_question(instance):
+            try:
+                new_question = int(text_input.text)
+                if 1 <= new_question <= 50:
+                    app.global_state.current_question = new_question
+                    self.update_question()
+                    self.update_answer_buttons()
+            except ValueError:
+                pass
+            popup.dismiss()
+
+        move_button = Button(
+            text="이동",
+            font_size=18,
+            font_name="NotoSans",
+            background_color=(0.2, 0.6, 1, 1),
+            on_press=go_to_question
+        )
+
+        cancel_button = Button(
+            text="취소",
+            font_size=18,
+            font_name="NotoSans",
+            background_color=(1, 0.2, 0.2, 1),
+            on_press=popup.dismiss
+        )
+
+        button_layout.add_widget(move_button)
+        button_layout.add_widget(cancel_button)
+
+        content.add_widget(text_input)
+        content.add_widget(button_layout)
+
+        popup.open()
 
     def prev_question(self):
-        """ 이전 문항 이동 """
-        if self.current_question > 1:
-            self.current_question -= 1
+        app = App.get_running_app()
+        if app.global_state.current_question > 1:
+            app.global_state.current_question -= 1
             self.update_question()
             self.update_answer_buttons()
 
     def next_question(self):
-        """ 다음 문항 이동 """
-        if self.current_question < 50:
-            self.current_question += 1
+        app = App.get_running_app()
+        if app.global_state.current_question < 50:
+            app.global_state.current_question += 1
             self.update_question()
             self.update_answer_buttons()
 
     def select_answer(self, answer):
-        """ 정답 선택 """
-        self.user_answers[self.current_question] = answer
+        app = App.get_running_app()
+        app.global_state.user_answers[app.global_state.current_question] = answer
         self.update_answer_buttons()
 
     def update_answer_buttons(self):
-        """ 선택한 정답 버튼 강조, 선택 안 했으면 초기화 """
-        selected_answer = self.user_answers.get(self.current_question, 0)
+        app = App.get_running_app()
+        selected_answer = app.global_state.user_answers.get(app.global_state.current_question, 0)
         for i in range(1, 5):
             btn = self.ids[f"answer_btn_{i}"]
             btn.background_color = (0.8, 0.8, 0.8, 1) if i != selected_answer else (0, 0.6, 1, 1)
 
-    def reset(self):
-        """ 홈으로 돌아가고 모든 데이터 초기화 """
-        self.manager.current = "main"
+    def to_home(self):
+        App.get_running_app().global_state.show_exit_popup(self)
 
     def submit_exam(self):
-        """ 시험 종료 후 채점 페이지로 이동 """
+        app = App.get_running_app()
         result_screen = self.manager.get_screen("result")
-        result_screen.selected_exam = self.selected_exam
-        result_screen.load_results(self.user_answers)
+        result_screen.load_results()
         self.manager.current = "result"
 
-class ResultScreen(Screen):           
-    def load_results(self, user_answers):
+class ResultScreen(Screen):
+    def load_results(self):
+        app = App.get_running_app()
         correct_answers = self.get_correct_answers()
-
-        # ✅ 정답 비교 및 점수 계산
-        score = sum(2 for q, ans in user_answers.items() if ans == correct_answers.get(q, 0))
+        score = sum(2 for q, ans in app.global_state.user_answers.items() if ans == correct_answers.get(q, 0))
         self.ids.score_label.text = f"정답 개수: {score // 2} / 오답 개수: {50 - (score // 2)} / 점수: {score}점"
-
+        
         result_table = self.ids.result_table
         result_table.clear_widgets()
 
-        row_height = 40  # ✅ 각 행의 높이 설정
-
         for i in range(1, 51):
             correct = correct_answers.get(i, 0)
-            user = user_answers.get(i, 0)
+            user = app.global_state.user_answers.get(i, 0)
 
-            num_label = Label(
-                text=str(i),
-                font_size=18,
-                font_name="NotoSans",
-                size_hint_y=None,
-                height=row_height,
-                bold=True,
-                color=(0, 0, 0, 1)
-            )
+            data = [
+                (str(i), (0, 0, 0, 1)),  
+                (str(user), (1, 0, 0, 1) if user != correct else (0, 0.6, 0, 1)),  
+                (str(correct), (0, 0, 0, 1)),  
+            ]
 
-            user_box = BoxLayout(size_hint_y=None, height=row_height)
-            with user_box.canvas.before:
-                user_box.canvas.before.clear()
-                with user_box.canvas.before:
-                    Color(1, 0.3, 0.3, 1) if user != correct else Color(0.6, 1, 0.6, 1)
-                    Rectangle(pos=user_box.pos, size=user_box.size)
+            for text, color in data:
+                label = Label(
+                    text=text,
+                    font_size=18,
+                    font_name="NotoSans",
+                    size_hint_y=None,
+                    height=40,
+                    color=color
+                )
 
-            user_label = Label(
-                text=str(user),
-                font_size=18,
-                font_name="NotoSans",
-                size_hint_y=None,
-                height=row_height,
-                color=(0, 0, 0, 1)
-            )
-            user_box.add_widget(user_label)  # ✅ Label을 BoxLayout 내부에 추가
+                with label.canvas.before:
+                    Color(0, 0, 0, 1)  
+                    Line(points=[label.x, label.y, label.x + label.width, label.y], width=1)  # 가로선
 
-            # ✅ 정답 (Label)
-            correct_label = Label(
-                text=str(correct),
-                font_size=18,
-                font_name="NotoSans",
-                size_hint_y=None,
-                height=row_height,
-                color=(0, 0, 0, 1)
-            )
+                result_table.add_widget(label)
+        result_table.height = max(40 * 50, self.height * 0.6)
 
-            # ✅ `GridLayout`에 추가
-            result_table.add_widget(num_label)
-            result_table.add_widget(user_box)
-            result_table.add_widget(correct_label)
-    
     def get_correct_answers(self):
-        """ 정답 로드 (파일에서 불러오기) """
-        answer_path = os.path.join(DATA_FOLDER, self.selected_exam,"answer_key.json")
+        app = App.get_running_app()
+        answer_path = os.path.join(DATA_FOLDER, app.global_state.selected_exam, "answer_key.json")
         if os.path.exists(answer_path):
-            print("읽음")
             with open(answer_path, "r", encoding="utf-8") as f:
-                correct_answers = json.load(f)
-                correct_answers = {int(k): v for k, v in correct_answers.items()}
-                return correct_answers
-            
+                return {int(k): v for k, v in json.load(f).items()}
         return {i: 0 for i in range(1, 51)}
 
-    def return_to_exam(self):
-        """ 시험 페이지로 돌아가서 기존 선택 유지 """
-        self.manager.current = "exam"
+    def to_home(self):
+        App.get_running_app().global_state.show_exit_popup(self)
 
-    def reset(self):
-        """ 홈으로 돌아가고 모든 데이터 초기화 """
-        self.manager.current = "main"
+    def return_to_exam(self):
+        self.manager.current = "exam"
 
 class CBTApp(App):
     def build(self):
+        self.global_state = GlobalState() 
         sm = ScreenManager()
         sm.add_widget(MainScreen(name="main"))
         sm.add_widget(ExamScreen(name="exam"))
